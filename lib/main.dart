@@ -3,12 +3,18 @@ import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:login_attendance_mysql/Dashboard.dart';
 import 'package:login_attendance_mysql/LoginScreen.dart';
 import 'package:login_attendance_mysql/LoginState.dart';
+import 'package:login_attendance_mysql/last_location.dart';
 import 'package:provider/provider.dart';
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => LoginState(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => LoginState()),
+        Provider<WebSocketManager>(
+          create: (context) => WebSocketManager('ws://localhost:3000'),
+        ),
+      ],
       child: KeyboardVisibilityProvider(
         child: MyApp(),
       ),
@@ -28,13 +34,18 @@ class MyApp extends StatelessWidget {
           return Navigator(
             pages: [
               // Always start with the LoginScreen
-              MaterialPage(
+              const MaterialPage(
                 child: LoginScreen(),
               ),
               // If logged in, navigate to Dashboard
               if (loginState.isLoggedIn)
                 MaterialPage(
                   child: Dashboard(),
+                ),
+              // Add a MaterialPage for the LastLocation
+              if (loginState.isLoggedIn)
+                MaterialPage(
+                  child: LastLocation(),
                 ),
             ],
             onPopPage: (route, result) {
@@ -48,4 +59,3 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-

@@ -3,11 +3,106 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:login_attendance_mysql/AttendanceFetcher.dart';
+import 'package:login_attendance_mysql/LoginScreen.dart';
 import 'package:login_attendance_mysql/LoginState.dart';
+import 'package:login_attendance_mysql/last_location.dart';
+import 'package:login_attendance_mysql/profile_page.dart';
+import 'package:login_attendance_mysql/sidebar.dart';
 import 'package:provider/provider.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:collection/collection.dart';
+
+class WebSocketManager {
+  late WebSocketChannel _channel;
+  StreamController<String>? _streamController;
+  List<Map<String, dynamic>> _attendanceData = [];
+  List<Map<String, dynamic>> _locationData = [];
+  bool isClosedManually = false;
+  LoginState? _loginState;
+
+  WebSocketManager(String url) {
+    _channel = IOWebSocketChannel.connect(url);
+    _setupWebSocket();
+  }
+
+  WebSocketChannel get channel => _channel;
+
+  StreamController<String> get streamController {
+    if (_streamController == null || _streamController!.isClosed) {
+      _streamController = StreamController<String>();
+    }
+    return _streamController!;
+  }
+
+  List<Map<String, dynamic>> get attendanceData => _attendanceData;
+  List<Map<String, dynamic>> get locationData => _locationData;
+
+  // New method to expose location data
+  List<Map<String, dynamic>> getLocationData() {
+    return _locationData;
+  }
+
+  List<Map<String, dynamic>> getAttendanceData() {
+    return _attendanceData;
+  }
+
+  // Use StreamController to manage location data updates
+  StreamController<List<Map<String, dynamic>>> _locationDataController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+
+  Stream<List<Map<String, dynamic>>> get locationDataStream => _locationDataController.stream;
+
+  StreamController<List<Map<String, dynamic>>> _attendanceDataController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+
+  Stream<List<Map<String, dynamic>>> get attendanceDataStream => _attendanceDataController.stream;
+
+  void _setupWebSocket() {
+    _channel.stream.listen(
+      (message) {
+        final Map<String, dynamic> data = json.decode(message);
+        if (data['type'] == 'attendanceUpdate') {
+          _attendanceData = List<Map<String, dynamic>>.from(data['data']);
+          _attendanceDataController.add(_attendanceData);
+          streamController.add(message);
+        } else if (data['type'] == 'locationUpdate') {
+          _locationData = List<Map<String, dynamic>>.from(data['data']);
+          // Add this line to update the location data stream
+          _locationDataController.add(_locationData);
+          streamController.add(message);
+        }
+      },
+      onDone: () {
+        if (_loginState?.isLoggedIn == true) {
+          if(!isClosedManually) {
+            // WebSocket closed (client disconnected), attempt reconnection
+            print('WebSocket closed. Attempting to reconnect...');
+            Future.delayed(const Duration(seconds: 1), () {
+              // _channel = IOWebSocketChannel.connect('ws://localhost:3000');
+              _setupWebSocket();
+            });
+          }
+        else {
+          _channel.sink.close();
+        }
+        }
+      },
+      onError: (error) {
+        // Handle WebSocket errors
+        print('WebSocket error: $error');
+      },
+      cancelOnError: true,
+    );
+    _streamController?.close();
+  }
+
+  void close() {
+    isClosedManually = true;
+    _channel.sink.close();
+    _streamController?.close();
+  }
+}
 
 
 class Dashboard extends StatefulWidget {
@@ -19,84 +114,38 @@ class _DashboardState extends State<Dashboard> {
   LoginState? _loginState;
   List<Map<String, dynamic>> _attendanceData = [];
   late WebSocketChannel channel;
-  bool isClosedManually = false;
 
   @override
-void initState() {
-  super.initState();
-  _loginState = Provider.of<LoginState>(context, listen: false);
+  void initState() {
+    super.initState();
+    _loginState = Provider.of<LoginState>(context, listen: false);
+    // Use the WebSocketManager from the provider
+    WebSocketManager webSocketManager = Provider.of<WebSocketManager>(context, listen: false);
 
-  // Initialize WebSocket channel
-  channel = IOWebSocketChannel.connect('ws://localhost:3000');
+    // Use the WebSocketManager passed from the main.dart file
+    channel = webSocketManager.channel;
 
-  // Handle WebSocket events
-  channel.stream.listen(
-    (message) {
-      final Map<String, dynamic> data = json.decode(message);
-      if (data['type'] == 'attendanceUpdate') {
-        setState(() {
-          _attendanceData = List<Map<String, dynamic>>.from(data['data']);
-        });
-      }
-    },
-    onDone: () {
-      if (!isClosedManually) {
-        // WebSocket closed (client disconnected), attempt reconnection
-        print('WebSocket closed. Attempting to reconnect...');
-        Future.delayed(Duration(seconds: 5), () {
-          // Attempt reconnection after a delay (adjust as needed)
-          channel = IOWebSocketChannel.connect('ws://localhost:3000');
-          setupWebSocket();
-        });
-      }
-    },
-    onError: (error) {
-      // Handle WebSocket errors
-      print('WebSocket error: $error');
-    },
-    cancelOnError: true,
-  );
+    // Fetch initial attendance data
+    if (_loginState?.isLoggedIn == true) {
+      fetchAttendanceData(_loginState!);
+    }
 
-  // Fetch initial attendance data
-  if (_loginState?.isLoggedIn == true) {
-    fetchAttendanceData(_loginState!);
+    // Listen to the locationDataStream and update the UI
+    webSocketManager.attendanceDataStream.listen((attendanceData) {
+      // Update UI with the new locationData
+      setState(() {
+        _attendanceData = attendanceData;
+        print('Received Attendance Data: $_attendanceData');
+      });
+    });
   }
-}
-
-void setupWebSocket() {
-  // Setup WebSocket events after reconnecting
-  channel.stream.listen(
-    (message) {
-      final Map<String, dynamic> data = json.decode(message);
-      if (data['type'] == 'attendanceUpdate') {
-        setState(() {
-          _attendanceData = List<Map<String, dynamic>>.from(data['data']);
-        });
-      }
-    },
-    onDone: () {
-      if (!isClosedManually) {
-        // WebSocket closed (client disconnected), attempt reconnection
-        print('WebSocket closed. Attempting to reconnect...');
-        Future.delayed(Duration(seconds: 5), () {
-          // Attempt reconnection after a delay (adjust as needed)
-          channel = IOWebSocketChannel.connect('ws://localhost:3000');
-          setupWebSocket();
-        });
-      }
-    },
-    onError: (error) {
-      // Handle WebSocket errors
-      print('WebSocket error: $error');
-    },
-    cancelOnError: true,
-  );
-}
 
   @override
   void dispose() {
-    isClosedManually = true;
-    channel.sink.close();
+    // If the user is logged out, close the WebSocket connection
+    if (_loginState?.isLoggedIn == false) {
+      channel.sink.close();
+    }
     super.dispose();
   }
 
@@ -104,7 +153,24 @@ void setupWebSocket() {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Dashboard'),
+        title: const Text('Dashboard'),
+      ),
+      drawer: Sidebar(
+        onTapDashboard: () {
+          Navigator.pop(context); // Close the sidebar
+        },
+        onTapProfile: () {
+          Navigator.pop(context); // Close the sidebar
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const ProfilePage()));
+        },
+        onTapLocation: () {
+          Navigator.pop(context); // Close the sidebar
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LastLocation()));
+        },
+        onTapLogout: () {
+          Navigator.pop(context); // Close the sidebar
+          _showLogoutConfirmation(context);
+        },
       ),
       body: Center(
         child: Column(
@@ -116,14 +182,45 @@ void setupWebSocket() {
             _buildAttendanceInfo(),
             ElevatedButton(
               onPressed: () {
-                _loginState?.logout();
-                Navigator.pop(context);
+                _showLogoutConfirmation(context);
               },
-              child: Text('Logout'),
+              child: const Text('Logout'),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _showLogoutConfirmation(BuildContext context) async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false, // user must tap button for close popup
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Logout Confirmation'),
+          content: const Text('Are you sure you want to logout?'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                // Close the popup
+                Navigator.of(context).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                // Perform logout and close the popup
+                _loginState?.logout();
+                Navigator.of(context).pop();
+                // Navigate to the login screen
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginScreen()));
+              },
+              child: const Text('Logout'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -169,11 +266,11 @@ void setupWebSocket() {
         );
       } else {
         // User is absent today
-        return Text('Today\'s Attendance: Absent');
+        return const Text('Today\'s Attendance: Absent');
       }
     } else {
       // No attendance data available
-      return Text('No attendance data available. Absent.');
+      return const Text('No attendance data available. Absent.');
     }
   }
 

@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class AttendanceFetcher {
   static Future<List<Map<String, dynamic>>> fetchAttendanceData(String namaLengkap) async {
-    final url = 'http://192.168.43.235/flutter_login/php/attendance.php';
+    const url = 'http://192.168.43.235/flutter_login/php/attendance.php';
     final response = await http.post(
       Uri.parse(url),
       body: {
@@ -24,7 +24,7 @@ class AttendanceFetcher {
           return (data['attendance_data'] as List<dynamic>).cast<Map<String, dynamic>>();
         } else {
           // Handle other cases or throw an error
-          throw FormatException('Invalid data format');
+          throw const FormatException('Invalid data format');
         }
       } catch (e) {
         // Handle decoding errors
